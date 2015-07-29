@@ -296,6 +296,7 @@ pool_stats(PoolName) ->
 
 -spec init(#pool{}) -> {'ok', #pool{}, 0}.
 init(#pool{}=Pool) ->
+    process_flag(priority, high),
     #pool{init_count = N} = Pool,
     MemberSup = pooler_pool_sup:member_sup_name(Pool),
     Pool1 = set_member_sup(Pool, MemberSup),
