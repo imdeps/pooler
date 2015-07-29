@@ -65,27 +65,12 @@ EDown = case proplists:get_value(use_edown, CONFIG) of
                      {branch, "release"}}}]}]
            end,
 
-LockDeps = case proplists:get_value(use_lock_deps, CONFIG) of
-               false ->
-                   skip;
-               V ->
-                   Tag = case V of
-                             {_, _} = T -> T;
-                             _ -> {branch, "release"}
-                         end,
-                   [{deps,
-                     [{rebar_lock_deps_plugin, ".*",
-                       {git, "https://github.com/imdeps/rebar_lock_deps_plugin.git",
-                        Tag}}]},
-                    {plugins, [rebar_lock_deps_plugin]}]
-           end,
-
 ConfigPath = filename:dirname(SCRIPT),
 DevMarker = filename:join([ConfigPath, ".concrete/DEV_MODE"]),
 
 case filelib:is_file(DevMarker) of
     true ->
-        ToMerge = lists:flatten([DevOnlyDeps, LockDeps, EDown, ErlOpts]),
+        ToMerge = lists:flatten([DevOnlyDeps, EDown, ErlOpts]),
         lists:foldl(fun(I, C) -> MergeConfig(I, C) end,
                     CONFIG, ToMerge);
     false ->
