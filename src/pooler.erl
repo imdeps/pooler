@@ -31,6 +31,7 @@
          start_link/1,
          take_member/1,
          take_member/2,
+         pick_member/1,
          take_group_member/1,
          return_group_member/2,
          return_group_member/3,
@@ -178,7 +179,7 @@ accept_member(PoolName, MemberPid) ->
 %%
 -spec take_member(atom() | pid()) -> pid() | error_no_members.
 take_member(PoolName) when is_atom(PoolName) orelse is_pid(PoolName) ->
-    gen_server:call(PoolName, {take_member, 0}, infinity).
+    gen_server:call(PoolName, {take_member, 0}, 2000).
 
 %% @doc Obtain exclusive access to a member of 'PoolName'.
 %%
@@ -189,8 +190,10 @@ take_member(PoolName) when is_atom(PoolName) orelse is_pid(PoolName) ->
 %%
 -spec take_member(atom() | pid(), non_neg_integer() | time_spec()) -> pid() | error_no_members.
 take_member(PoolName, Timeout) when is_atom(PoolName) orelse is_pid(PoolName) ->
-    gen_server:call(PoolName, {take_member, time_as_millis(Timeout)}, infinity).
+    gen_server:call(PoolName, {take_member, time_as_millis(Timeout)}, Timeout + 1000).
 
+pick_member(PoolName) when is_atom(PoolName) orelse is_pid(PoolName) ->
+    gen_server:call(PoolName, pick_member, 2000).
 
 %% @doc Take a member from a randomly selected member of the group
 %% `GroupName'. Returns `MemberPid' or `error_no_members'.  If no
@@ -315,6 +318,37 @@ set_member_sup(#pool{} = Pool, MemberSup) ->
 
 handle_call({take_member, Timeout}, From = {APid, _}, #pool{} = Pool) when is_pid(APid) ->
     maybe_reply(take_member_from_pool_queued(Pool, From, Timeout));
+
+handle_call(pick_member, _From, #pool{init_count = InitCount,
+                            max_count = Max,
+                            free_pids = Free,
+                            in_use_count = NumInUse,
+                            free_count = NumFree,
+                            starting_members = StartingMembers,
+                            member_start_timeout = StartTimeout} = Pool) ->
+    Pool1 = remove_stale_starting_members(Pool, StartingMembers, StartTimeout),
+    NonStaleStartingMemberCount = length(Pool1#pool.starting_members),
+    NumCanAdd = Max - (NumInUse + NumFree + NonStaleStartingMemberCount),
+    case Free of
+        [] when NumCanAdd =< 0  ->
+            {reply, error_no_members, Pool1};
+        [] when NumCanAdd > 0 ->
+            NumToAdd = max(min(InitCount - NonStaleStartingMemberCount, NumCanAdd), 1),
+            Pool2 = add_members_async(NumToAdd, Pool1),
+            {reply, error_no_members, Pool2};
+        [Pid|Rest] ->
+            Pool2 = Pool1#pool{free_pids = Rest ++ [Pid]},
+            Pool3 = case Pool2#pool.auto_grow_threshold of
+                        N when is_integer(N) andalso
+                               Pool2#pool.free_count =< N andalso
+                               NumCanAdd > 0 ->
+                            NumToAdd = max(min(InitCount - NonStaleStartingMemberCount, NumCanAdd), 0),
+                            add_members_async(NumToAdd, Pool2);
+                        _ ->
+                            Pool2
+                    end,
+            {reply, Pid, Pool3}
+    end;
 
 handle_call({return_member, Pid, Status}, {_CPid, _Tag}, Pool) ->
     {reply, ok, do_return_member(Pid, Status, Pool)};
